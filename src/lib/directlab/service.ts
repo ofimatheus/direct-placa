@@ -1,4 +1,5 @@
 import "server-only";
+import { isShortLinkDestination, type ReviewShortLink } from "./short-link";
 import { DirectLabError } from "./errors";
 import { getPlaceDetails, searchPlaces, type PlaceSummary, type PlacesClientOptions } from "./places";
 import { resolveGoogleLink, type ResolveOptions } from "./resolver";
@@ -21,7 +22,7 @@ export interface Candidate {
 }
 
 export type ReviewLinkResult =
-  | { status: "found"; place: ReviewPlace; originalUrl: string | null }
+  | { status: "found"; place: ReviewPlace; originalUrl: string | null; shortLink?: ReviewShortLink }
   | { status: "choose"; candidates: Candidate[]; originalUrl: string | null }
   | { status: "not_identified"; originalUrl: string };
 
@@ -99,6 +100,11 @@ export function isValidReviewUrl(value: string | null | undefined): value is str
 export interface GenerationGate {
   check: (placeId: string) => Promise<void>;
   charge: (placeId: string) => Promise<QuotaSnapshot | null>;
+  /**
+   * Conclusão com link curto (migration 028): cobra E cria/reaproveita o link
+   * /r/<código> na mesma transação. Quando presente, substitui charge.
+   */
+  finalize?: (placeId: string, destination: string) => Promise<{ quota: QuotaSnapshot | null; code: string | null }>;
 }
 
 /**
@@ -111,13 +117,28 @@ export interface GenerationGate {
  *      link não é entregue.
  * Qualquer erro antes do passo 4 não consome nada.
  */
-export async function generateReviewLink(place: PlaceSummary | { placeId: string }, deps: ServiceDeps, gate?: GenerationGate): Promise<{ place: ReviewPlace; quota: QuotaSnapshot | null }> {
+export async function generateReviewLink(
+  place: PlaceSummary | { placeId: string },
+  deps: ServiceDeps,
+  gate?: GenerationGate,
+): Promise<{ place: ReviewPlace; quota: QuotaSnapshot | null; shortCode: string | null }> {
   await gate?.check(place.placeId);
   const known = "reviewUrl" in place && isValidReviewUrl(place.reviewUrl) ? place : null;
   const full = known ?? (await getPlaceDetails(deps.places, place.placeId));
   if (!isValidReviewUrl(full.reviewUrl)) throw new DirectLabError("review_link_unavailable", `sem writeAReviewUri válido para ${full.placeId}`);
-  const quota = gate ? await gate.charge(full.placeId) : null;
-  return { place: { placeId: full.placeId, name: full.name, address: full.address, reviewUrl: full.reviewUrl }, quota };
+  let quota: QuotaSnapshot | null = null;
+  let shortCode: string | null = null;
+  if (gate?.finalize && isShortLinkDestination(full.reviewUrl)) {
+    // Cobrança + link curto numa única transação (falhou o link → nada cobrado).
+    const done = await gate.finalize(full.placeId, full.reviewUrl);
+    quota = done.quota;
+    shortCode = done.code;
+  } else {
+    // Formato de link fora dos permitidos para o link curto: entrega o link do Google como antes, sem link curto.
+    if (gate?.finalize) console.warn("directlab_short_link_skipped_format", { placeId: full.placeId });
+    quota = gate ? await gate.charge(full.placeId) : null;
+  }
+  return { place: { placeId: full.placeId, name: full.name, address: full.address, reviewUrl: full.reviewUrl }, quota, shortCode };
 }
 
 export type Identified =

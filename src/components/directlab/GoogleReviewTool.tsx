@@ -1,5 +1,6 @@
 "use client";
 
+import { NFC_SHORT_LINK_TARGET_BYTES } from "@/lib/directlab/short-link";
 import { useState } from "react";
 import Link from "next/link";
 import { CopyButton } from "@/components/ui/CopyButton";
@@ -28,12 +29,20 @@ interface Candidate {
   token?: string;
 }
 
+/** Link curto DirectPlaca devolvido pela geração (/r/<código>). */
+interface ShortLink {
+  code: string;
+  url: string;
+  /** Bytes UTF-8 do endereço. */
+  bytes: number;
+}
+
 type Mode = "link" | "search";
 
 type View =
   | { kind: "idle" }
   | { kind: "processing"; message: string }
-  | { kind: "found"; place: Place; originalUrl: string | null }
+  | { kind: "found"; place: Place; originalUrl: string | null; shortLink?: ShortLink }
   | {
       kind: "choose";
       candidates: Candidate[];
@@ -51,7 +60,7 @@ type View =
   | { kind: "error"; code: DirectLabErrorCode | "unexpected"; message: string };
 
 type ApiReply = (
-  | { status: "found"; place: Place; originalUrl: string | null }
+  | { status: "found"; place: Place; originalUrl: string | null; shortLink?: ShortLink }
   | { status: "choose"; candidates: Candidate[]; originalUrl: string | null }
   | { status: "not_identified"; originalUrl: string }
 ) & { quota?: QuotaSnapshot };
@@ -171,6 +180,7 @@ export function GoogleReviewTool({
         kind: "found",
         place: reply.place,
         originalUrl: reply.originalUrl,
+        ...(reply.shortLink ? { shortLink: reply.shortLink } : {}),
       });
     else if (reply.status === "choose")
       setView({
@@ -611,7 +621,7 @@ export function GoogleReviewTool({
                 >
                   <path d="m5 12 5 5 9-10" />
                 </svg>
-                Estabelecimento encontrado
+                {view.shortLink ? "Link de avaliação gerado" : "Estabelecimento encontrado"}
               </p>
               <p className="mt-3 text-xs font-semibold tracking-wide text-ink-soft uppercase">
                 Estabelecimento
@@ -626,22 +636,48 @@ export function GoogleReviewTool({
                 </>
               )}
 
-              <label
-                htmlFor="directlab-review-url"
-                className="mt-4 block text-xs font-semibold tracking-wide text-ink-soft uppercase"
-              >
-                Link direto para avaliação
-              </label>
-              <input
-                id="directlab-review-url"
-                className="input mt-1 font-mono text-sm"
-                readOnly
-                value={view.place.reviewUrl}
-                onFocus={(e) => e.currentTarget.select()}
-              />
+              {view.shortLink ? (
+                <>
+                  <label
+                    htmlFor="directlab-short-url"
+                    className="mt-4 block text-xs font-semibold tracking-wide text-ink-soft uppercase"
+                  >
+                    Link curto DirectPlaca
+                  </label>
+                  <input
+                    id="directlab-short-url"
+                    className="input mt-1 font-mono text-sm"
+                    readOnly
+                    value={view.shortLink.url}
+                    onFocus={(e) => e.currentTarget.select()}
+                    data-directlab-short-url=""
+                  />
+                  <p className="mt-1 text-xs text-ink-soft" data-directlab-short-bytes={view.shortLink.bytes}>
+                    {view.shortLink.bytes <= NFC_SHORT_LINK_TARGET_BYTES
+                      ? `${view.shortLink.bytes} bytes do endereço · otimizado para NFC`
+                      : `Este link possui ${view.shortLink.bytes} bytes. Considere utilizar um domínio mais curto para tags com pouca memória.`}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <label
+                    htmlFor="directlab-review-url"
+                    className="mt-4 block text-xs font-semibold tracking-wide text-ink-soft uppercase"
+                  >
+                    Link direto para avaliação
+                  </label>
+                  <input
+                    id="directlab-review-url"
+                    className="input mt-1 font-mono text-sm"
+                    readOnly
+                    value={view.place.reviewUrl}
+                    onFocus={(e) => e.currentTarget.select()}
+                  />
+                </>
+              )}
               <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                 <CopyButton
-                  value={view.place.reviewUrl}
+                  value={view.shortLink?.url ?? view.place.reviewUrl}
                   label="Copiar link"
                   copiedLabel="✓ Link copiado"
                   className="btn"
@@ -679,6 +715,23 @@ export function GoogleReviewTool({
                     Ver placa
                   </Link>
                 </p>
+              )}
+
+              {view.shortLink && (
+                <details className="mt-4 text-xs text-ink-soft" data-directlab-original-link="">
+                  <summary className="cursor-pointer font-semibold">Ver link original do Google</summary>
+                  <p className="mt-2">É para este endereço oficial que o link curto leva. Use-o se preferir o link do Google.</p>
+                  <input
+                    className="input mt-2 font-mono text-xs"
+                    readOnly
+                    aria-label="Link original do Google"
+                    value={view.place.reviewUrl}
+                    onFocus={(e) => e.currentTarget.select()}
+                  />
+                  <div className="mt-2">
+                    <CopyButton value={view.place.reviewUrl} label="Copiar link do Google" copiedLabel="✓ Link do Google copiado" className="btn btn-small" />
+                  </div>
+                </details>
               )}
 
               <details className="mt-4 text-xs text-ink-soft">

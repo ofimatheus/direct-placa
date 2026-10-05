@@ -14,6 +14,7 @@ export type DirectLabErrorCode =
   | "rate_limited"
   | "daily_limit"
   | "not_configured"
+  | "short_link_unavailable"
   | "invalid_query";
 
 export const DIRECTLAB_ERRORS: Record<DirectLabErrorCode, { status: number; message: string }> = {
@@ -32,6 +33,7 @@ export const DIRECTLAB_ERRORS: Record<DirectLabErrorCode, { status: number; mess
     message: "O Google não forneceu o link de avaliação deste local. Confira se é um estabelecimento com perfil no Google.",
   },
   google_unavailable: { status: 502, message: "O Google não respondeu agora. Tente de novo em instantes." },
+  short_link_unavailable: { status: 503, message: "Não foi possível concluir o link agora. Nada foi descontado; tente de novo em instantes." },
   google_denied: { status: 502, message: "A consulta ao Google foi recusada. Avise o administrador do sistema." },
   quota_exceeded: { status: 429, message: "O limite de consultas ao Google foi atingido. Tente novamente mais tarde." },
   rate_limited: { status: 429, message: "Você fez muitas consultas seguidas. Aguarde um pouco e tente de novo." },

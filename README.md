@@ -760,6 +760,44 @@ e permissões. A mudança é só de apresentação: nenhuma regra, consulta ou m
     (`src/lib/db/qr-series.ts`). Só conta `source = 'qr'` e é filtrado pela RLS. Não exigiu
     migration: agrega até 10 mil leituras no servidor, e o total exibido é sempre exato.
 
+## Avaliação Google: link curto DirectPlaca (`/r/<código>`, pensado para NFC)
+
+A geração da Avaliação Google continua igual: pesquisa ou link, candidatos, seleção, resolução de
+share.google e Places API. O que muda é o resultado. Ao concluir, a DirectPlaca guarda o link
+oficial e entrega um **link curto próprio**.
+
+- **Formato:** `<origem de NEXT_PUBLIC_GO_BASE_URL>/r/<7 caracteres>`.
+  - Exemplo: `https://go.directplaca.com/r/A7K4829` = 36 bytes.
+  - A tela mostra o tamanho real em bytes UTF-8 e avisa (sem bloquear) acima de 40.
+  - O tamanho é só do endereço; o registro NDEF tem um pequeno acréscimo do formato.
+- **Banco** (migration `20261009120000_directlab_review_short_links.sql`):
+  - Tabela `directlab_review_links`:
+    - código único e imutável;
+    - um código por dono + Place ID;
+    - dono com `ON DELETE SET NULL` (link já entregue não quebra).
+  - `directlab_finalize_generation` cobra a utilização e cria/reaproveita o link na mesma
+    transação: se o link falhar, nada é cobrado.
+  - `public_review_link(código)` devolve só o destino. Não há leitura direta da tabela.
+- **Destino:** só links de avaliação do Google, validados no banco e no servidor:
+  - `google.com/maps/…`;
+  - `search.google.com/local/writereview`;
+  - `g.page/r/…`.
+
+  Recusa `google.com/url`, `..`, http, `javascript:`, `data:`, `file:` e outros hosts. Não é um
+  encurtador genérico.
+- **Rota pública** `src/app/r/[code]/route.ts`:
+  - consulta só o código e responde 302 (nunca 301), com `no-store`;
+  - inexistente → 404; banco fora → 503;
+  - não chama o Google, não consome cota e não registra acessos;
+  - o `proxy.ts` libera `/r/<7>` sem sessão, inclusive no domínio `go`.
+- **"Usar em uma placa":** inalterado. A placa recebe o link original do Google (`/go/<código>`
+  → Google, sem redirect duplo).
+- **Sem a migration aplicada:** a ferramenta segue como antes, entregando só o link do Google.
+- **Testes:**
+  - `npm run test:directlab-shortlink` e `npm run test:ui-directlab-shortlink`;
+  - `supabase/tests/directlab_short_links.sql`;
+  - `scripts/e2e/directlab-shortlink-e2e.mjs`.
+
 ## Landing pública de revendedores (`/revendedores`) e CMS (Admin › Landing Page)
 
 A landing é **administrada pelo ADMIN** em **Admin › Landing Page**, sem editar arquivos nem fazer
@@ -1277,5 +1315,3 @@ Com Supabase local (`npx supabase start`), pule os stubs e rode só os arquivos 
 - **Editor de template**: arrasta o QR e o código, mas o redimensionamento é pelos campos numéricos.
 - **Sem teste visual automatizado em navegador**: as rotas foram verificadas com o servidor
   rodando.
-#   d i r e c t - p l a c a  
- 

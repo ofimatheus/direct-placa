@@ -22,6 +22,10 @@ const BANNER_B = "banner/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2.jpg";
 let mode = "default";
 /** Quantas vezes a cobrança (directlab_charge_generation) foi chamada — para o E2E provar que pesquisa/erro não cobram. */
 let chargeCalls = 0;
+/** Link curto da Avaliação Google (migration 028), em memória: código → destino. */
+const reviewLinks = new Map();
+let finalizeCalls = 0;
+let reviewLookups = 0;
 /** CMS da landing (migration 027), em memória: rascunho e publicado. */
 let landingDraft = null; // { content, version, updated_at }
 let landingPublished = null; // { content, version, published_at }
@@ -50,7 +54,20 @@ const server = createServer((req, res) => {
   req.on("end", () => {
     const body = Buffer.concat(chunks).toString("utf8");
     const json = (status, data) => res.writeHead(status, { "Content-Type": "application/json" }).end(JSON.stringify(data));
-    if (url.pathname === "/__calls") return json(200, { chargeCalls });
+    if (url.pathname === "/__calls") return json(200, { chargeCalls, finalizeCalls, reviewLookups });
+    if (url.pathname === "/__review-link") {
+      reviewLinks.set(url.searchParams.get("code"), url.searchParams.get("dest"));
+      return json(200, { ok: true });
+    }
+    if (url.pathname === "/rest/v1/rpc/public_review_link") {
+      reviewLookups++;
+      const { p_code } = JSON.parse(body || "{}");
+      return json(200, reviewLinks.get(String(p_code).toUpperCase()) ?? null);
+    }
+    if (url.pathname === "/rest/v1/rpc/directlab_finalize_generation") {
+      finalizeCalls++;
+      return json(200, [{ allowed: true, charged: true, used_today: 6, daily_limit: 10, retry_after_seconds: 0, public_code: "A7K4829" }]);
+    }
     if (url.pathname === "/__landing") {
       if (url.searchParams.get("reset") === "1") landingDraft = landingPublished = null;
       return json(200, { draft: landingDraft, published: landingPublished });

@@ -1,9 +1,10 @@
+import { reviewShortUrl } from "@/lib/directlab/short-link";
 import { NextResponse } from "next/server";
 import { requireDirectLabApi } from "@/lib/auth/session";
 import { DirectLabError } from "@/lib/directlab/errors";
 import { directLabErrorResponse, handleGoogleReviewRequest } from "@/lib/directlab/handler";
 import { createCandidateTokens } from "@/lib/directlab/candidate-token";
-import { chargeDirectLabGeneration, checkDirectLabGeneration, consumeDirectLabBurst } from "@/lib/directlab/quota";
+import { chargeDirectLabGeneration, finalizeDirectLabGeneration, checkDirectLabGeneration, consumeDirectLabBurst } from "@/lib/directlab/quota";
 import { readDirectLabSigningSecret } from "@/lib/env.server";
 import { readJson } from "@/lib/http";
 import { getGooglePlacesApiKey } from "@/lib/integrations/google-places/key";
@@ -32,6 +33,9 @@ export async function POST(request: Request) {
       consumeQuota: () => consumeDirectLabBurst(auth.session.supabase),
       checkGeneration: (placeId) => checkDirectLabGeneration(auth.session.supabase, placeId),
       chargeGeneration: (placeId) => chargeDirectLabGeneration(auth.session.supabase, placeId),
+      // Link curto /r/<código>: cobrança + link na mesma transação (migration 028).
+      finalizeGeneration: (placeId, destination) => finalizeDirectLabGeneration(auth.session.supabase, placeId, destination),
+      shortLinkUrl: (code) => reviewShortUrl(code),
       tokens: createCandidateTokens(readDirectLabSigningSecret(), auth.session.user.id),
     });
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });

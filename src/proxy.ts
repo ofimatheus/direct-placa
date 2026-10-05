@@ -3,8 +3,8 @@ import { updateSession } from "@/lib/supabase/proxy";
 
 /**
  * 1. Domínio de redirect (ex.: go.meudominio.com): /A7K482 é reescrito para /go/A7K482.
- *    Nesse host só se servem o redirect e as páginas públicas do DirectLink
- *    (/link/<código>), que também são abertas por QR Code.
+ *    Nesse host só se servem o redirect, as páginas públicas do DirectLink
+ *    (/link/<código>) e os links curtos da Avaliação Google (/r/<código>).
  * 2. Demais rotas: renova a sessão do Supabase e protege /admin e /reseller.
  */
 function goHostname(): string | null {
@@ -23,9 +23,11 @@ export async function proxy(request: NextRequest) {
   const goHost = goHostname();
 
   const isDirectLink = /^\/link\/[A-Za-z0-9]{7}\/?$/.test(path);
+  // Link curto da Avaliação Google (NFC): público, sem sessão.
+  const isReviewShortLink = /^\/r\/[A-Za-z0-9]{7}\/?$/.test(path);
 
   if (goHost && request.headers.get("host") === goHost) {
-    if (isDirectLink) return NextResponse.next();
+    if (isDirectLink || isReviewShortLink) return NextResponse.next();
     const match = /^\/([A-Za-z0-9]{4,12})\/?$/.exec(path);
     if (!match) return new NextResponse("Not found", { status: 404 });
     const url = request.nextUrl.clone();
@@ -35,8 +37,8 @@ export async function proxy(request: NextRequest) {
 
   // O redirect público não usa sessão: resposta mais rápida.
   if (path.startsWith("/go/")) return NextResponse.next();
-  // DirectLink público: sem sessão.
-  if (isDirectLink) return NextResponse.next();
+  // DirectLink público e link curto da Avaliação Google: sem sessão.
+  if (isDirectLink || isReviewShortLink) return NextResponse.next();
   // Landing pública de revendedores (e sua imagem social): sem sessão.
   if (path === "/revendedores" || path.startsWith("/revendedores/")) return NextResponse.next();
 

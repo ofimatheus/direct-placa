@@ -31,7 +31,9 @@
     "test:landing-cms": "tsx --conditions=react-server scripts/test-landing-cms.ts",
     "test:ui-landing-editor": "tsx scripts/test-ui-landing-editor.tsx",
     "test:landing-products": "tsx --conditions=react-server scripts/test-landing-products.ts",
-    "test:ui-landing-products": "tsx scripts/test-ui-landing-products.tsx"
+    "test:ui-landing-products": "tsx scripts/test-ui-landing-products.tsx",
+    "test:directlab-shortlink": "tsx --conditions=react-server scripts/test-directlab-shortlink.ts",
+    "test:ui-directlab-shortlink": "tsx scripts/test-ui-directlab-shortlink.tsx"
   },
   "engines": {
     "node": ">=20"

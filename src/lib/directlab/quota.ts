@@ -75,3 +75,29 @@ export async function chargeDirectLabGeneration(sb: SupabaseClient, placeId: str
   if (!row.allowed) throw new DirectLabError("daily_limit", "cota diária esgotada (cobrança)", Math.max(1, Number(row.retry_after_seconds ?? 3600)));
   return row.daily_limit == null ? null : { used: Number(row.used_today ?? 0), limit: Number(row.daily_limit) };
 }
+
+export interface FinalizeResult {
+  quota: QuotaSnapshot | null;
+  /** Código do link curto; null se a migration 028 ainda não foi aplicada (segue como antes, só com o link do Google). */
+  code: string | null;
+}
+
+/**
+ * Conclui a geração (migration 028): cobra a utilização E cria/reaproveita o
+ * link curto na MESMA transação do banco — se o link falhar, nada é cobrado.
+ * Sem a migration, cobra como antes e entrega só o link do Google.
+ */
+export async function finalizeDirectLabGeneration(sb: SupabaseClient, placeId: string, destination: string): Promise<FinalizeResult> {
+  const { data, error } = await sb.rpc("directlab_finalize_generation", { p_place_id: placeId, p_destination_url: destination });
+  if (error) {
+    if (error.code === "PGRST202" || error.code === "42883") {
+      console.warn("directlab_short_link_not_installed", { code: error.code });
+      return { quota: await chargeDirectLabGeneration(sb, placeId), code: null };
+    }
+    throw new DirectLabError("short_link_unavailable", `finalização da geração falhou: ${error.code} ${error.message}`);
+  }
+  const row = (Array.isArray(data) ? data[0] : data) as (GenerationRow & { public_code?: string | null }) | undefined;
+  if (!row) throw new DirectLabError("short_link_unavailable", "finalização sem resposta");
+  if (!row.allowed) throw new DirectLabError("daily_limit", "cota diária esgotada (finalização)", Math.max(1, Number(row.retry_after_seconds ?? 3600)));
+  return { quota: row.daily_limit == null ? null : { used: Number(row.used_today ?? 0), limit: Number(row.daily_limit) }, code: row.public_code ?? null };
+}

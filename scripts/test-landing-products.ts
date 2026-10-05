@@ -78,7 +78,11 @@ ok("P5: imagem fora da biblioteca (caminho forjado, SVG) e título acima do limi
 
 // P6: sem migration nova; bucket reaproveitado
 const migs = readdirSync("supabase/migrations");
-check(migs.length === 27 && migs.at(-1) === "20261008120000_landing_cms.sql", "P6 migrations", migs.at(-1));
+// "Nossos Produtos" não precisou de migration: a do CMS existe e nenhuma migration POSTERIOR mexe na landing
+// (outras entregas podem criar migrations próprias, como a do link curto da Avaliação Google).
+const later = migs.filter((m) => m > "20261008120000_landing_cms.sql");
+const touchesLanding = later.filter((m) => /landing|products/i.test(readFileSync(`supabase/migrations/${m}`, "utf8").replace(/--.*$/gm, "")));
+check(migs.includes("20261008120000_landing_cms.sql") && touchesLanding.length === 0, "P6 migrations", { later, touchesLanding });
 check(readFileSync("src/components/landing-cms/LandingEditor.tsx", "utf8").includes('"/api/admin/landing/media"'), "P6 upload único");
 ok("P6: nenhuma migration nova (o conteúdo já é um documento JSON validado); imagens pelo mesmo upload e bucket landing-assets");
 

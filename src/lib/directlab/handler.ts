@@ -1,3 +1,4 @@
+import { urlByteLength } from "./short-link";
 import "server-only";
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -47,6 +48,13 @@ export interface HandlerContext {
    * (o link então não é entregue). Revendedor devolve o uso do dia; ADMIN, null.
    */
   chargeGeneration?: (placeId: string) => Promise<QuotaSnapshot | null>;
+  /**
+   * Conclusão com link curto (migration 028): cobra E cria/reaproveita o link
+   * /r/<código> na mesma transação. Quando presente, é usado no lugar de chargeGeneration.
+   */
+  finalizeGeneration?: (placeId: string, destination: string) => Promise<{ quota: QuotaSnapshot | null; code: string | null }>;
+  /** Monta a URL pública do link curto a partir do código (origem de NEXT_PUBLIC_GO_BASE_URL). */
+  shortLinkUrl?: (code: string) => string | null;
   /** Comprovantes assinados de candidatos (evitam repetir a chamada ao Google). */
   tokens?: CandidateTokens;
   /** @deprecated Regra antiga (cobrar antes do Google). Não é mais chamado. */
@@ -83,14 +91,24 @@ export async function handleGoogleReviewRequest(raw: unknown, ctx: HandlerContex
   const gate: GenerationGate = {
     check: ctx.checkGeneration ?? (async () => undefined),
     charge: ctx.chargeGeneration ?? (async () => null),
+    ...(ctx.finalizeGeneration ? { finalize: ctx.finalizeGeneration } : {}),
   };
   const withTokens = (results: PlaceSummary[]) =>
     toCandidates(results).map((c, i) => {
       const token = ctx.tokens?.sign(results[i]!);
       return token ? { ...c, token } : c;
     });
-  const found = (generated: { place: ReviewPlace; quota: QuotaSnapshot | null }, originalUrl: string | null) =>
-    generated.quota ? { status: "found" as const, place: generated.place, originalUrl, quota: generated.quota } : { status: "found" as const, place: generated.place, originalUrl };
+  const found = (generated: { place: ReviewPlace; quota: QuotaSnapshot | null; shortCode: string | null }, originalUrl: string | null) => {
+    const url = generated.shortCode && ctx.shortLinkUrl ? ctx.shortLinkUrl(generated.shortCode) : null;
+    const shortLink = generated.shortCode && url ? { code: generated.shortCode, url, bytes: urlByteLength(url) } : undefined;
+    return {
+      status: "found" as const,
+      place: generated.place,
+      originalUrl,
+      ...(shortLink ? { shortLink } : {}),
+      ...(generated.quota ? { quota: generated.quota } : {}),
+    };
+  };
 
   if (body.action === "resolve") {
     const { identified, originalUrl } = await identifyFromLink(body.url, deps);
