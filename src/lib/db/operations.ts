@@ -103,6 +103,9 @@ export async function paidSalesByReseller(sb: SupabaseClient, resellerId?: strin
 // ---------------------------------------------------------------------
 // Placas (ADMIN)
 // ---------------------------------------------------------------------
+/** Abas de Admin › Placas: operacionais, em quarentena (da placa OU do lote) e todas. */
+export type PlateView = "operational" | "quarantine" | "all";
+
 export interface PlateFilters {
   code?: string;
   reseller?: string; // uuid | "none"
@@ -110,7 +113,12 @@ export interface PlateFilters {
   batch?: string;
   configured?: "yes" | "no";
   customer?: string;
+  /** Padrão: "all" (comportamento anterior para quem não informa). */
+  view?: PlateView;
 }
+
+/** Máximo de placas por ação em massa (o banco confere o mesmo limite). */
+export const BULK_MAX = 5000;
 
 export interface PlateListItem {
   id: string;
@@ -125,14 +133,25 @@ export interface PlateListItem {
   customer_name: string | null;
   batch_id: string | null;
   batch_name: string | null;
+  /** "plate" = placa em quarentena; "batch" = lote em quarentena; null = operacional. */
+  quarantine_state: "plate" | "batch" | null;
+  quarantined_at: string | null;
+  quarantine_reason: string | null;
 }
 
-export async function listPlates(
-  sb: SupabaseClient,
-  filters: PlateFilters,
-  page: number,
-): Promise<{ rows: PlateListItem[]; total: number }> {
-  let query = sb.from("plates").select(PLATE_COLUMNS, { count: "exact" });
+/** A migration da quarentena (029) ainda não foi aplicada? (a tela segue funcionando como antes) */
+function quarantineMissing(error: { code?: string; message?: string } | null): boolean {
+  return !!error && (error.code === "42703" || error.code === "PGRST204" || /quarantine_state|quarantined_at|quarantine_reason/.test(error.message ?? ""));
+}
+
+/**
+ * Consulta de placas com TODOS os filtros da tela (inclusive a aba). Usada
+ * pela listagem, pelos contadores das abas e por "selecionar todas do filtro",
+ * para que a seleção em massa use exatamente os mesmos critérios da tela.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function plateQuery(sb: SupabaseClient, columns: string, filters: PlateFilters, withQuarantine: boolean, head = false): any {
+  let query = sb.from("plates").select(columns, { count: "exact", head });
   const code = filters.code?.toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (code) query = query.ilike("public_code", `%${code}%`);
   if (filters.reseller === "none") query = query.is("reseller_id", null);
@@ -142,9 +161,28 @@ export async function listPlates(
   if (filters.customer) query = query.eq("customer_id", filters.customer);
   if (filters.configured === "yes") query = query.not("destination_url", "is", null);
   if (filters.configured === "no") query = query.is("destination_url", null);
+  if (withQuarantine && filters.view === "operational") query = query.is("quarantine_state", null);
+  if (withQuarantine && filters.view === "quarantine") query = query.not("quarantine_state", "is", null);
+  return query;
+}
 
+export async function listPlates(
+  sb: SupabaseClient,
+  filters: PlateFilters,
+  page: number,
+): Promise<{ rows: PlateListItem[]; total: number; quarantineInstalled: boolean }> {
   const from = (page - 1) * PAGE_SIZE;
-  const result = await query.order("created_at", { ascending: false }).order("public_code").range(from, from + PAGE_SIZE - 1);
+  const run = (withQuarantine: boolean) =>
+    plateQuery(sb, withQuarantine ? `${PLATE_COLUMNS}, quarantined_at, quarantine_reason, quarantine_state` : PLATE_COLUMNS, filters, withQuarantine)
+      .order("created_at", { ascending: false })
+      .order("public_code")
+      .range(from, from + PAGE_SIZE - 1);
+  let quarantineInstalled = true;
+  let result = await run(true);
+  if (quarantineMissing(result.error)) {
+    quarantineInstalled = false;
+    result = await run(false);
+  }
   const plates = list<PlateRow>(result);
 
   const [resellers, customers, batches] = await Promise.all([
@@ -154,8 +192,9 @@ export async function listPlates(
   ]);
 
   return {
+    quarantineInstalled,
     total: result.count ?? plates.length,
-    rows: plates.map((p) => ({
+    rows: (plates as (PlateRow & { quarantine_state?: string | null; quarantined_at?: string | null; quarantine_reason?: string | null })[]).map((p) => ({
       id: p.id,
       public_code: p.public_code,
       status: p.status,
@@ -168,8 +207,36 @@ export async function listPlates(
       customer_name: p.customer_id ? (customers.get(p.customer_id) ?? null) : null,
       batch_id: p.batch_id,
       batch_name: p.batch_id ? (batches.get(p.batch_id) ?? null) : null,
+      quarantine_state: p.quarantine_state === "plate" || p.quarantine_state === "batch" ? p.quarantine_state : null,
+      quarantined_at: p.quarantined_at ?? null,
+      quarantine_reason: p.quarantine_reason ?? null,
     })),
   };
+}
+
+/** Contadores das abas (com os demais filtros aplicados). */
+export async function countPlateViews(sb: SupabaseClient, filters: PlateFilters): Promise<Record<PlateView, number> | null> {
+  const counts = await Promise.all(
+    (["operational", "quarantine", "all"] as const).map(async (view) => {
+      const { count, error } = await plateQuery(sb, "id", { ...filters, view }, true, true);
+      if (quarantineMissing(error)) return null;
+      if (error) throw httpErrorFromDb(error);
+      return count ?? 0;
+    }),
+  );
+  if (counts.some((c) => c === null)) return null;
+  return { operational: counts[0]!, quarantine: counts[1]!, all: counts[2]! };
+}
+
+/** "Selecionar todas do filtro": ids de TODAS as placas que a tela mostra com estes filtros (até BULK_MAX). */
+export async function listPlateIds(sb: SupabaseClient, filters: PlateFilters): Promise<{ ids: string[]; total: number; truncated: boolean }> {
+  const { data, error, count } = await plateQuery(sb, "id", filters, true)
+    .order("created_at", { ascending: false })
+    .order("public_code")
+    .range(0, BULK_MAX - 1);
+  if (error) throw httpErrorFromDb(error);
+  const ids = ((data ?? []) as { id: string }[]).map((r) => r.id);
+  return { ids, total: count ?? ids.length, truncated: (count ?? 0) > ids.length };
 }
 
 export async function listBatchOptions(sb: SupabaseClient): Promise<{ id: string; name: string }[]> {
@@ -266,28 +333,29 @@ export async function listCustomersOfReseller(
 }
 
 export async function listStockPlates(sb: SupabaseClient, limit = 300) {
-  const plates = list<{ id: string; public_code: string; batch_id: string | null }>(
-    await sb
-      .from("plates")
-      .select("id, public_code, batch_id")
-      .is("reseller_id", null)
-      .eq("status", "in_stock")
-      .order("created_at")
-      .order("public_code")
-      .limit(limit),
-  );
+  // Estoque vendável: placas em quarentena (da placa ou do lote) ficam de fora.
+  const run = (withQuarantine: boolean) => {
+    let q = sb.from("plates").select("id, public_code, batch_id").is("reseller_id", null).eq("status", "in_stock");
+    if (withQuarantine) q = q.is("quarantine_state", null);
+    return q.order("created_at").order("public_code").limit(limit);
+  };
+  let result = await run(true);
+  if (quarantineMissing(result.error)) result = await run(false);
+  const plates = list<{ id: string; public_code: string; batch_id: string | null }>(result);
   const batches = await namesById(sb, "plate_batches", "name", uniq(plates.map((p) => p.batch_id)));
   return plates.map((p) => ({ ...p, batch_name: p.batch_id ? (batches.get(p.batch_id) ?? null) : null }));
 }
 
 export async function countStockPlates(sb: SupabaseClient): Promise<number> {
-  const { count, error } = await sb
-    .from("plates")
-    .select("id", { count: "exact", head: true })
-    .is("reseller_id", null)
-    .eq("status", "in_stock");
-  if (error) throw httpErrorFromDb(error);
-  return count ?? 0;
+  const run = (withQuarantine: boolean) => {
+    let q = sb.from("plates").select("id", { count: "exact", head: true }).is("reseller_id", null).eq("status", "in_stock");
+    if (withQuarantine) q = q.is("quarantine_state", null);
+    return q;
+  };
+  let result = await run(true);
+  if (quarantineMissing(result.error)) result = await run(false);
+  if (result.error) throw httpErrorFromDb(result.error);
+  return result.count ?? 0;
 }
 
 /**

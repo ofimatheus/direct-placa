@@ -760,6 +760,62 @@ e permissões. A mudança é só de apresentação: nenhuma regra, consulta ou m
     (`src/lib/db/qr-series.ts`). Só conta `source = 'qr'` e é filtrado pela RLS. Não exigiu
     migration: agrega até 10 mil leituras no servidor, e o total exibido é sempre exato.
 
+## Admin › Placas: seleção em massa, quarentena e exclusão definitiva
+
+- **Abas:** **Operacionais** (padrão), **Quarentena** e **Todas**, com contadores e os mesmos filtros
+  (código, revendedor, status, lote, configuração).
+- **Seleção:**
+  - caixa por placa e "selecionar todas desta página";
+  - com a página marcada e mais placas no filtro, "Selecionar todas as N placas deste filtro", que
+    usa exatamente os filtros da tela;
+  - a barra mostra sempre a quantidade exata e fica fixa no rodapé no celular.
+- **Regra de "fora da operação":** placa em quarentena **ou** lote em quarentena. A placa sai da
+  lista Operacional, do estoque disponível, do contador "Disponíveis" e da escolha automática de
+  atribuição/venda, e a seleção manual é recusada.
+- **Quarentena da placa:** colunas `plates.quarantined_at/by/quarantine_reason`. Não muda o
+  `status`, então restaurar devolve exatamente o estado anterior. `blocked` continua sendo o
+  bloqueio operacional.
+  - Só entram placas fora de uso: sem revendedor, não ativas e sem reserva.
+  - Placa em quarentena não muda de dono, cliente, status ou destino (gatilho
+    `guard_plate_quarantine`) e não pode ser reservada.
+- **Exclusão definitiva** (`admin_plates_delete_unused`): só placas **nunca usadas**.
+  - Protegidas, com o motivo informado: venda de revendedor, venda do ADMIN, cliente, revendedor
+    atual ou anterior, ativação/destino e acessos.
+  - Confirmação com a **senha do ADMIN**: conferida no Supabase Auth com o e-mail da sessão;
+    nunca guardada, registrada ou devolvida; 5 tentativas a cada 15 min.
+  - O banco trava as placas e reconfere tudo na mesma transação.
+  - `DELETE` direto na tabela é recusado para os usuários do app.
+  - Remove do Storage só o cache da arte individual de cada placa excluída
+    (`previews/plates/…`).
+- **Escala:** cada ação é uma requisição e uma chamada ao banco para até 5000 placas.
+- **Banco:** migration `20261010120000_plate_quarantine.sql`. Nenhuma placa existente entra em
+  quarentena. Sem a migration aplicada, a tela funciona como antes, sem as ações em massa.
+- **Testes:**
+  - `supabase/tests/plate_quarantine.sql`;
+  - `npm run test:plates-bulk`;
+  - `scripts/e2e/plates-bulk-e2e.mjs`.
+
+## Download em massa das artes do lote
+
+Na página do lote, o botão principal **"Baixar artes das placas (PNG)"** gera e baixa, em um clique,
+o ZIP com a **arte final de cada placa**: 1 placa = 1 PNG, `<public_code>.png`, sem outros
+arquivos.
+
+- **O que cada PNG contém:** arte base + QR único + código público, no tamanho exato do template.
+  É gerado pelo renderizador oficial (`createPlateRenderer`, o mesmo da prévia fiel) e na versão
+  de template registrada no lote (`plate_template_version`).
+- **Lotes grandes:** são divididos em partes (`<lote>-parte-NN.zip`), com um botão por parte.
+- **Outras exportações:**
+  - "Exportar CSV": os dados.
+  - "QR Codes avulsos (PNG + SVG)": só o QR de cada placa, para montar em outra arte, com
+    `manifest.csv`. O `.svg` é o QR em vetor; o Windows pode exibi-lo como "Chrome HTML Document",
+    mas é uma imagem.
+- **Testes:**
+  - `npm run test:exports-art`: abre cada PNG e confere dimensões, arte base, QR lido, código,
+    versão do template, igualdade com a prévia e lote grande;
+  - `npm run test:ui-exports-panel`;
+  - `npm run test:exports`.
+
 ## Avaliação Google: link curto DirectPlaca (`/r/<código>`, pensado para NFC)
 
 A geração da Avaliação Google continua igual: pesquisa ou link, candidatos, seleção, resolução de

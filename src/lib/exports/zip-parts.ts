@@ -17,6 +17,12 @@ export interface ZipEntry {
 export interface ZipPartSpec {
   baseName: string;
   entriesFor(plate: ExportPlate): Promise<ZipEntry[]>;
+  /**
+   * Inclui manifest.csv dentro de cada ZIP e, com várias partes, o manifesto
+   * completo à parte. Padrão: sim. O pacote de ARTES desliga (só PNGs de impressão;
+   * os dados ficam no "Exportar CSV").
+   */
+  manifest?: boolean;
   manifestHeader: string[];
   manifestRow(plate: ExportPlate): (string | number | null)[];
 }
@@ -58,7 +64,7 @@ export async function writeZipPart(
 
   const single = partNumber === 1 && index >= total;
   const name = single ? `${spec.baseName}.zip` : `${spec.baseName}-parte-${pad(partNumber)}.zip`;
-  files["manifest.csv"] = [strToU8(toCsv(spec.manifestHeader, manifest)), { level: 6 }];
+  if (spec.manifest !== false) files["manifest.csv"] = [strToU8(toCsv(spec.manifestHeader, manifest)), { level: 6 }];
 
   const zipped = zipSync(files);
   const path = `${ctx.storagePrefix}/${name}`;
@@ -79,11 +85,13 @@ export async function writeZipPart(
 export async function finalizeZipExport(
   ctx: ExportContext,
   state: ExportState,
-  spec: Pick<ZipPartSpec, "baseName" | "manifestHeader" | "manifestRow">,
+  spec: Pick<ZipPartSpec, "baseName" | "manifestHeader" | "manifestRow" | "manifest">,
 ): Promise<{ files: ExportFile[]; filePath: string | null }> {
   if (state.files.length <= 1) {
     return { files: state.files, filePath: state.files[0]?.path ?? null };
   }
+  // Pacote sem manifesto (artes) em várias partes: só os ZIPs; sem arquivo único (file_path nulo, como antes).
+  if (spec.manifest === false) return { files: state.files, filePath: null };
   const zipFor = (offset: number) =>
     state.files.find((f) => (f.offset_start ?? 0) <= offset && offset < (f.offset_end ?? 0))?.name ?? null;
   const rows = ctx.plates.map((plate, offset) => [...spec.manifestRow(plate), zipFor(offset)]);

@@ -14,8 +14,8 @@ export const PLATE_STATUS_LABEL: Record<PlateStatus, string> = {
 
 export const EXPORT_KIND_LABEL: Record<ExportKind, string> = {
   csv: "Planilha CSV",
-  qr_zip: "QR Codes (ZIP)",
-  art_png_zip: "Artes do lote (ZIP)",
+  qr_zip: "QR Codes avulsos (PNG + SVG)",
+  art_png_zip: "Artes das placas (PNG)",
   art_pdf: "Artes em PDF",
 };
 

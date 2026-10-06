@@ -1,16 +1,17 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { EmptyState, PageHeader, Pagination, Tone, parsePage } from "@/components/ui/primitives";
+import { PlatesTable } from "@/components/plates/PlatesTable";
+import { Segmented } from "@/components/ui/kit";
+import { EmptyState, PageHeader, Pagination, parsePage } from "@/components/ui/primitives";
 import { requireAdminPage } from "@/lib/auth/session";
-import { PAGE_SIZE, listBatchOptions, listPlates, listResellerOptions, type PlateFilters } from "@/lib/db/operations";
+import { PAGE_SIZE, countPlateViews, listBatchOptions, listPlates, listResellerOptions, type PlateFilters, type PlateView } from "@/lib/db/operations";
 import type { PlateStatus } from "@/lib/db/types";
-import { DESTINATION_LABEL } from "@/lib/plates/destinations";
-import { PLATE_STATUS_LABEL, PLATE_STATUS_TONE } from "@/lib/plates/labels";
+import { PLATE_STATUS_LABEL } from "@/lib/plates/labels";
 import { formatInt } from "@/lib/utils/money";
 
 export const metadata: Metadata = { title: "Placas" };
 
-type Search = { code?: string; reseller?: string; status?: string; batch?: string; configured?: string; page?: string };
+type Search = { code?: string; reseller?: string; status?: string; batch?: string; configured?: string; page?: string; estado?: string };
 const STATUSES = Object.keys(PLATE_STATUS_LABEL) as PlateStatus[];
 
 export default async function PlatesPage({ searchParams }: { searchParams: Promise<Search> }) {
@@ -23,17 +24,37 @@ export default async function PlatesPage({ searchParams }: { searchParams: Promi
     batch: params.batch || undefined,
     configured: params.configured === "yes" || params.configured === "no" ? params.configured : undefined,
   };
+  // Aba: operacionais (padrão) · quarentena (da placa OU do lote) · todas.
+  const view: PlateView = params.estado === "quarantine" || params.estado === "all" ? params.estado : "operational";
   const page = parsePage(params.page);
-  const [{ rows, total }, resellers, batches] = await Promise.all([
-    listPlates(supabase, filters, page),
+  const [{ rows, total, quarantineInstalled }, counts, resellers, batches] = await Promise.all([
+    listPlates(supabase, { ...filters, view }, page),
+    countPlateViews(supabase, filters),
     listResellerOptions(supabase),
     listBatchOptions(supabase),
   ]);
   const hasFilters = Object.values(filters).some(Boolean);
+  const keep = { code: params.code, reseller: params.reseller, status: params.status, batch: params.batch, configured: params.configured };
+  const query = (extra: Record<string, string | undefined>) =>
+    new URLSearchParams(Object.entries({ ...keep, ...extra }).filter((e): e is [string, string] => !!e[1])).toString();
+  const tabs = counts
+    ? [
+        { key: "operational", label: `Operacionais (${formatInt(counts.operational)})`, href: `/admin/plates?${query({})}` },
+        { key: "quarantine", label: `Quarentena (${formatInt(counts.quarantine)})`, href: `/admin/plates?${query({ estado: "quarantine" })}` },
+        { key: "all", label: `Todas (${formatInt(counts.all)})`, href: `/admin/plates?${query({ estado: "all" })}` },
+      ]
+    : null;
+  const estado = view === "operational" ? undefined : view;
 
   return (
     <div>
       <PageHeader title="Placas" description="Todas as placas produzidas, com revendedor, cliente e destino atual." />
+
+      {tabs && (
+        <div className="mb-4">
+          <Segmented items={tabs} active={view} label="Filtrar placas por situação" />
+        </div>
+      )}
 
       <form method="get" className="card mb-4 grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_1fr_1fr_auto]">
         <label className="block">
@@ -82,12 +103,13 @@ export default async function PlatesPage({ searchParams }: { searchParams: Promi
             <option value="no">Não configuradas</option>
           </select>
         </label>
+        {estado && <input type="hidden" name="estado" value={estado} />}
         <div className="flex items-end gap-2">
           <button type="submit" className="btn btn-primary">
             Filtrar
           </button>
           {hasFilters && (
-            <Link href="/admin/plates" className="btn">
+            <Link href={estado ? `/admin/plates?estado=${estado}` : "/admin/plates"} className="btn">
               Limpar
             </Link>
           )}
@@ -95,8 +117,8 @@ export default async function PlatesPage({ searchParams }: { searchParams: Promi
       </form>
 
       {rows.length === 0 ? (
-        <EmptyState title={hasFilters ? "Nenhuma placa com esses filtros" : "Nenhuma placa ainda"}>
-          {!hasFilters && (
+        <EmptyState title={view === "quarantine" ? "Nenhuma placa em quarentena" + (hasFilters ? " com esses filtros" : "") : hasFilters ? "Nenhuma placa com esses filtros" : "Nenhuma placa ainda"}>
+          {!hasFilters && view !== "quarantine" && (
             <>
               As placas nascem nos{" "}
               <Link href="/admin/batches" className="link">
@@ -107,56 +129,14 @@ export default async function PlatesPage({ searchParams }: { searchParams: Promi
           )}
         </EmptyState>
       ) : (
-        <div className="card overflow-x-auto">
-          <table className="data-table min-w-[860px]">
-            <thead>
-              <tr>
-                <th>Código</th>
-                <th>Revendedor</th>
-                <th>Cliente</th>
-                <th>Destino</th>
-                <th>Status</th>
-                <th>Lote</th>
-                <th className="text-right">Acessos QR</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((p) => (
-                <tr key={p.id}>
-                  <td>
-                    <Link href={`/admin/plates/${p.id}`} className="plate-code text-base text-ink hover:text-cyan hover:underline">
-                      {p.public_code}
-                    </Link>
-                  </td>
-                  <td>{p.reseller_name ?? <span className="text-ink-soft">—</span>}</td>
-                  <td>{p.customer_name ?? <span className="text-ink-soft">—</span>}</td>
-                  <td className="max-w-56">
-                    {p.destination_url ? (
-                      <span className="block truncate" title={p.destination_url}>
-                        <span className="font-semibold">{p.destination_type ? DESTINATION_LABEL[p.destination_type] : "Link"}</span>{" "}
-                        <span className="text-ink-soft">{p.destination_url.replace(/^https?:\/\//, "")}</span>
-                      </span>
-                    ) : (
-                      <span className="text-ink-soft">Não configurado</span>
-                    )}
-                  </td>
-                  <td>
-                    <Tone tone={PLATE_STATUS_TONE[p.status]}>{PLATE_STATUS_LABEL[p.status]}</Tone>
-                  </td>
-                  <td className="text-ink-soft">{p.batch_name ?? "—"}</td>
-                  <td className="text-right">{formatInt(p.qr_access_count)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <PlatesTable rows={rows} total={total} view={view} filterQuery={query({ estado: view })} bulkEnabled={quarantineInstalled} />
       )}
       <Pagination
         page={page}
         total={total}
         pageSize={PAGE_SIZE}
         basePath="/admin/plates"
-        params={{ code: params.code, reseller: params.reseller, status: params.status, batch: params.batch, configured: params.configured }}
+        params={{ ...keep, estado }}
       />
     </div>
   );

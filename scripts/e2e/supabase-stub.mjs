@@ -20,6 +20,8 @@ const LOGO = "logo/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1.png";
 const BANNER_A = "banner/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1.png";
 const BANNER_B = "banner/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2.jpg";
 let mode = "default";
+/** Ações em massa de placas (migration 029): chamadas recebidas (função, quantidade de ids, motivo). */
+const plateBulkCalls = [];
 /** Quantas vezes a cobrança (directlab_charge_generation) foi chamada — para o E2E provar que pesquisa/erro não cobram. */
 let chargeCalls = 0;
 /** Link curto da Avaliação Google (migration 028), em memória: código → destino. */
@@ -179,6 +181,20 @@ const server = createServer((req, res) => {
     if (mode === "sem-directlink" && (url.pathname === "/rest/v1/direct_links" || url.pathname === "/rest/v1/rpc/directlink_page_status")) {
       return json(404, { code: "PGRST205", message: "Could not find the table 'public.direct_links' in the schema cache", details: null, hint: null });
     }
+    if (url.pathname === "/__plates-bulk") return json(200, { calls: plateBulkCalls });
+    if (url.pathname === "/rest/v1/rpc/consume_rate_limit") return json(200, [{ allowed: true, hits: 1, retry_after_seconds: 0 }]);
+    if (url.pathname.startsWith("/rest/v1/rpc/admin_plates_")) {
+      const fn = url.pathname.replace("/rest/v1/rpc/", "");
+      const args = JSON.parse(body || "{}");
+      const n = (args.p_plate_ids ?? []).length;
+      plateBulkCalls.push({ fn, n, reason: args.p_reason ?? null });
+      if (fn === "admin_plates_quarantine") return json(200, [{ quarantined: n, already: 0, skipped: 0, skipped_codes: [], missing: 0 }]);
+      if (fn === "admin_plates_restore") return json(200, [{ restored: n, not_quarantined: 0, still_batch_quarantine: 0, missing: 0 }]);
+      if (fn === "admin_plates_delete_unused") {
+        const kept = Math.min(3, n);
+        return json(200, [{ deleted: n - kept, deleted_plates: [], kept, kept_by_reason: kept ? { reseller: kept } : {}, kept_codes: ["QYM2T6", "WFBPYC", "YHDR9B"].slice(0, kept), missing: 0 }]);
+      }
+    }
     // Dados de demonstração dos dashboards (valores iguais às referências aprovadas).
     const demo = demoResponse(req.method, url);
     if (demo) {
@@ -239,6 +255,13 @@ function demoResponse(method, url) {
     if (method === "HEAD") return { body: [], range: "*/1" };
     return { body: [{ id: 1, plate_id: "9a7e0000-0000-4000-8000-000000000004", source: "qr", created_at: new Date(Date.now() - 3600000).toISOString() }] };
   }
+  // Admin › Placas: contadores das abas (HEAD) e "selecionar todas do filtro" (só ids).
+  if (path === "/rest/v1/plates" && url.searchParams.get("select") === "id") {
+    const total = mode === "plates-1000" ? 1000 : 5;
+    if (method === "HEAD") return { body: [], range: `*/${total}` };
+    const ids = Array.from({ length: total }, (_, i) => `9a7e0000-0000-4000-8000-${String(i).padStart(12, "0")}`);
+    return { body: ids.map((id) => ({ id })), range: `0-${total - 1}/${total}` };
+  }
   if (path === "/rest/v1/plates" && (url.searchParams.get("select") ?? "").includes("public_code")) {
     const codes = ["QYM2T6", "WFBPYC", "YHDR9B", "Z99KXQ", "2KDQP2"];
     return {
@@ -249,7 +272,7 @@ function demoResponse(method, url) {
         status: i === 4 ? "active" : "assigned", qr_access_count: i === 4 ? 1 : 0, last_qr_access_at: null,
         created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
       })),
-      range: "0-4/5",
+      range: mode === "plates-1000" ? "0-4/1000" : "0-4/5",
     };
   }
   if (path === "/rest/v1/customers") return { body: [{ id: "c0000000-0000-4000-8000-000000000001", name: "Marcos", company_name: "MTS Corporation" }] };

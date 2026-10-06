@@ -46,7 +46,7 @@ export function ExportsPanel({ batchId, initial, canGenerateArt }: Props) {
     };
   }, [anyActive, batchId]);
 
-  // "Exportar CSV" e "Baixar QR Codes" baixam o arquivo sozinhos quando ficam prontos.
+  // Todos os pedidos baixam o arquivo sozinhos quando ficam prontos (artes em várias partes: um botão por parte).
   useEffect(() => {
     for (const job of exports) {
       if (job.status === "done" && autoDownload.current.has(job.id)) {
@@ -68,7 +68,7 @@ export function ExportsPanel({ batchId, initial, canGenerateArt }: Props) {
       const body = (await response.json().catch(() => ({}))) as { export?: BatchExportView; error?: string };
       if (!response.ok || !body.export) throw new Error(body.error ?? "Não foi possível iniciar a exportação.");
       const job = body.export;
-      if (kind !== "art_png_zip") autoDownload.current.add(job.id);
+      autoDownload.current.add(job.id);
       setExports((current) => [job, ...current.filter((e) => e.id !== job.id)]);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Não foi possível iniciar a exportação.");
@@ -93,17 +93,22 @@ export function ExportsPanel({ batchId, initial, canGenerateArt }: Props) {
   return (
     <section aria-labelledby="exports-title" className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        {actionButton("csv", "Exportar CSV")}
-        {actionButton("qr_zip", "Baixar QR Codes")}
-        {actionButton("art_png_zip", latestArt?.status === "done" ? "Gerar artes novamente" : "Gerar artes", latestArt?.status !== "done")}
+        {/* Download em massa = ARTE FINAL de cada placa (1 placa = 1 PNG), pelo renderizador oficial. */}
+        {actionButton("art_png_zip", latestArt?.status === "done" ? "Gerar e baixar artes novamente" : "Baixar artes das placas (PNG)", latestArt?.status !== "done")}
         {latestArt?.status === "done" &&
           latestArt.files.map((file, index) => (
-            <a key={file.path} href={downloadUrl(latestArt.id, index)} className="btn btn-primary">
+            <a key={file.path} href={downloadUrl(latestArt.id, index)} className="btn btn-primary" data-art-download="">
               {latestArt.files.length === 1 ? "Baixar artes" : `Baixar ${file.name}`}
             </a>
           ))}
+        {actionButton("csv", "Exportar CSV")}
+        {actionButton("qr_zip", "QR Codes avulsos (PNG + SVG)")}
       </div>
       {!canGenerateArt && <p className="text-sm text-ink-soft">Este lote não tem template vinculado, então não gera artes.</p>}
+      <p className="text-xs text-ink-soft" data-qr-pack-note="">
+        "QR Codes avulsos" traz só o QR de cada placa, para montar em outra arte: um PNG e o mesmo QR em vetor (.svg). O Windows pode mostrar o .svg
+        como &quot;Chrome HTML Document&quot;, mas ele é uma imagem. Para imprimir as placas, use &quot;Baixar artes das placas&quot;.
+      </p>
       {error && (
         <p role="alert" className="text-sm text-danger">
           {error}

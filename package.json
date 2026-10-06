@@ -33,7 +33,10 @@
     "test:landing-products": "tsx --conditions=react-server scripts/test-landing-products.ts",
     "test:ui-landing-products": "tsx scripts/test-ui-landing-products.tsx",
     "test:directlab-shortlink": "tsx --conditions=react-server scripts/test-directlab-shortlink.ts",
-    "test:ui-directlab-shortlink": "tsx scripts/test-ui-directlab-shortlink.tsx"
+    "test:ui-directlab-shortlink": "tsx scripts/test-ui-directlab-shortlink.tsx",
+    "test:exports-art": "tsx --conditions=react-server scripts/test-exports-art.ts",
+    "test:ui-exports-panel": "tsx scripts/test-ui-exports-panel.tsx",
+    "test:plates-bulk": "tsx --conditions=react-server scripts/test-plates-bulk.ts"
   },
   "engines": {
     "node": ">=20"

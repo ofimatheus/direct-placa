@@ -80,41 +80,45 @@ const expect = (ok: boolean, message: string) => {
 };
 
 async function main() {
-  // 1) Artes cabendo numa parte: nome simples + manifest dentro
+  // 1) Artes cabendo numa parte: nome simples e SOMENTE os PNGs das placas (pedido: sem manifest no pacote de artes)
   let result = await run("art_png_zip", 45 * 1024 * 1024);
   expect(result.files.length === 1 && result.files[0]!.name === "Lote-Setembro-2026.zip", "ZIP único com o nome do lote");
   let zip = unzipSync(store.get(`plate-outputs/${result.files[0]!.path}`)!);
-  const manifest = strFromU8(zip["manifest.csv"]!).replace(/^\uFEFF/, "").trim().split("\r\n");
-  expect(manifest[0] === "public_code,qr_url,nfc_url,filename", "cabeçalho do manifest");
-  expect(manifest.length === 31, "manifest com 30 linhas");
-  expect(manifest[1] === `${plates[0]!.public_code},https://go.meudominio.com/${plates[0]!.public_code}?src=qr,https://go.meudominio.com/${plates[0]!.public_code}?src=nfc,${plates[0]!.public_code}.png`, "linha do manifest");
   expect(plates.every((p) => zip[`${p.public_code}.png`]), "um PNG por placa");
+  expect(Object.keys(zip).length === 30 && Object.keys(zip).every((n) => n.endsWith(".png")), "artes: só os 30 PNGs (sem manifest)");
   expect(result.filePath === result.files[0]!.path, "file_path do export único");
   console.log(`Artes em 1 parte: ${result.files[0]!.name} (${Object.keys(zip).length} arquivos)`);
 
-  // 2) Limite pequeno força várias partes + manifest completo com zip_file
+  // 2) Limite pequeno força várias partes; artes continuam só PNG (sem manifest dentro nem à parte)
   result = await run("art_png_zip", 60 * 1024);
   const zips = result.files.filter((f) => f.name.endsWith(".zip"));
   expect(zips.length > 1 && zips[0]!.name === "Lote-Setembro-2026-parte-01.zip", "partes numeradas");
+  expect(zips.length === result.files.length, "artes em partes: só ZIPs (sem manifest avulso)");
   const seen: string[] = [];
   for (const f of zips) {
     const part = unzipSync(store.get(`plate-outputs/${f.path}`)!);
     seen.push(...Object.keys(part).filter((n) => n.endsWith(".png")));
-    expect(!!part["manifest.csv"], `manifest dentro de ${f.name}`);
+    expect(Object.keys(part).every((n) => n.endsWith(".png")), `só PNG dentro de ${f.name}`);
   }
   expect(seen.length === 30 && new Set(seen).size === 30, "cada placa em exatamente uma parte");
-  const full = result.files.find((f) => f.name === "Lote-Setembro-2026-manifest.csv");
-  expect(!!full, "manifest completo das partes");
-  const fullRows = strFromU8(store.get(`plate-outputs/${full!.path}`)!).trim().split("\r\n");
-  expect(fullRows[0]!.endsWith(",zip_file") && fullRows.length === 31, "manifest completo com zip_file");
   expect(result.filePath === null, "sem file_path quando há várias partes");
-  console.log(`Artes em ${zips.length} partes: ${zips.map((z) => z.name).join(", ")} + ${full!.name}`);
+  console.log(`Artes em ${zips.length} partes: ${zips.map((z) => z.name).join(", ")}`);
+
+  // 2b) O manifesto continua existindo onde é útil: pacote de QR (dentro e, com várias partes, completo com zip_file)
+  result = await run("qr_zip", 60 * 1024);
+  const qrZips = result.files.filter((f) => f.name.endsWith(".zip"));
+  const fullQr = result.files.find((f) => f.name === "Lote-Setembro-2026-QR-Codes-manifest.csv");
+  expect(qrZips.length > 1 && qrZips.every((f) => !!unzipSync(store.get(`plate-outputs/${f.path}`)!)["manifest.csv"]), "QR em partes: manifest dentro de cada parte");
+  expect(!!fullQr && strFromU8(store.get(`plate-outputs/${fullQr.path}`)!).trim().split("\r\n")[0]!.endsWith(",zip_file"), "QR em partes: manifest completo com zip_file");
+  console.log(`QR em ${qrZips.length} partes + ${fullQr?.name}`);
 
   // 3) QR Codes: PNG + SVG por placa
   result = await run("qr_zip", 45 * 1024 * 1024);
   zip = unzipSync(store.get(`plate-outputs/${result.files[0]!.path}`)!);
   expect(result.files[0]!.name === "Lote-Setembro-2026-QR-Codes.zip", "nome do ZIP de QR");
   expect(plates.every((p) => zip[`${p.public_code}.png`] && zip[`${p.public_code}.svg`]), "PNG e SVG por placa");
+  const manifest = strFromU8(zip["manifest.csv"]!).replace(/^\uFEFF/, "").trim().split("\r\n");
+  expect(manifest[0] === "public_code,qr_url,nfc_url,filename,svg_filename" && manifest.length === 31, "QR: manifest com cabeçalho e 30 linhas");
   console.log(`QR Codes: ${result.files[0]!.name} (${Object.keys(zip).length} arquivos)`);
 
   // 4) CSV com BOM e proteção contra fórmula

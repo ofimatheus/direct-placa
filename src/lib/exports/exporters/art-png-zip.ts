@@ -4,12 +4,15 @@ import { finalizeZipExport, urlsFor, writeZipPart, type ZipPartSpec } from "../z
 import type { Exporter } from "../types";
 
 /**
- * Artes finais: arte base + QR individual + public_code, usando a versão
- * EXATA de template registrada no lote. Resultado: {Lote}.zip com {code}.png e manifest.csv.
+ * Artes finais para impressão: arte base + QR individual + public_code, pelo
+ * renderizador OFICIAL (o mesmo da prévia) e na versão EXATA de template
+ * registrada no lote. Resultado: {Lote}.zip com SOMENTE {public_code}.png —
+ * 1 placa = 1 PNG, sem manifesto nem outros arquivos (os dados ficam no "Exportar CSV").
  */
 function spec(ctx: ExportContext): ZipPartSpec {
   return {
     baseName: ctx.slug,
+    manifest: false,
     manifestHeader: ["public_code", "qr_url", "nfc_url", "filename"],
     manifestRow: (plate) => {
       const urls = urlsFor(plate);

@@ -106,6 +106,11 @@ function previewKey(layout: PlateLayout, imageSha: string, publicCode: string, q
   return sha256Hex(JSON.stringify({ layout, imageSha, publicCode, qrUrl }));
 }
 
+/** Caminho (em plate-outputs) do PNG em cache de uma combinação layout + arte + código + URL. */
+export function previewPath(scope: string, layout: PlateLayout, imageSha: string, publicCode: string, qrUrl: string): string {
+  return `previews/${scope}/${previewKey(layout, imageSha, publicCode, qrUrl)}.png`;
+}
+
 /**
  * Prévia fiel: usa o MESMO renderer da produção. O PNG vai para o Storage
  * (chave = hash do conteúdo) e a resposta é uma URL assinada — assim a prévia
@@ -135,7 +140,7 @@ export async function cachedRenderUrl(
   qrUrl: string,
   downloadName?: string,
 ): Promise<string> {
-  const path = `previews/${scope}/${previewKey(layout, version.base_image_sha256, publicCode, qrUrl)}.png`;
+  const path = previewPath(scope, layout, version.base_image_sha256, publicCode, qrUrl);
   if (!(await objectExists(admin, OUTPUTS_BUCKET, path))) {
     const bytes = await loadVersionImage(admin, version);
     const renderer = await createPlateRenderer(layout, bytes);
